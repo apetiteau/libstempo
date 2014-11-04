@@ -1,16 +1,3 @@
-# strategy for python 3
-# for returns, converting char to str (which is a different thing in py2 and py3) should be OK
-#              not sure about the numpy arrays though
-# for input:
-# define a global name for whatever char type is used in the module
-# ctypedef unsigned char char_type
-#
-# cdef char_type[:] _chars(s):
-#     if isinstance(s, unicode):
-#         # encode to the specific encoding used inside of the module
-#         s = (<unicode>s).encode('utf8')
-#     return s
-
 import os, math, re, time
 from distutils.version import StrictVersion
 
@@ -53,6 +40,7 @@ cdef extern from "tempo2.h":
     cdef char *TEMPO2_VERSION "TEMPO2_h_VER"
 
     int MAX_PSR, MAX_OBSN
+    double ECLIPTIC_OBLIQUITY # Added by A.Petiteau
 
     ctypedef struct parameter:
         char **label
@@ -646,6 +634,55 @@ cdef class tempopulsar:
 
             return numpy.asarray(_stoas)
 
+    # >>>>>>>>>>>>>>>>>>>> start of changes by A.Petiteau >>>>>>>>>>>>>>>>>>>> 
+    # Set the stoas at index index to value              
+    def add2stoas(self,index,value) :   
+        #print "%.19Lf + %.19Lf = " %(self.psr[0].obsn[index].sat , <long double>value),
+        self.psr[0].obsn[index].sat = self.psr[0].obsn[index].sat + <long double>value
+        #print "%.19Lf" % (self.psr[0].obsn[index].sat)
+    
+    def coordequatorial(self):
+        """ Return equatorial coordinates : [declination, right ascension] = [delta, alpha]"""
+        if self.psr[0].eclCoord == 0 :
+            return numpy.array([self['RAJ'].val, self['DECJ'].val])
+        else :
+            b = self['ELAT'].val
+            l = self['ELONG'].val
+            ce = numpy.cos(ECLIPTIC_OBLIQUITY*numpy.pi/(3600.*180))
+            se = numpy.sin(ECLIPTIC_OBLIQUITY*numpy.pi/(3600.*180))
+            d = numpy.arcsin(ce*numpy.sin(b)+se*numpy.cos(b)*numpy.sin(l))
+            a = numpy.arctan2((-se*numpy.sin(b)+ce*numpy.cos(b)*numpy.sin(l))/numpy.cos(d),numpy.cos(b)*numpy.cos(l)/numpy.cos(d))
+            a = a%(2*numpy.pi)
+            return numpy.array([a,d])
+
+    def coordecliptic(self):     
+        """ Return ecliptic coordinates : [beta, lambda] = [lattitude, longitude]  """
+        if self.psr[0].eclCoord == 1 :
+            return numpy.array([self['ELAT'].val, self['ELONG'].val])
+        else :
+            a = self['RAJ'].val
+            d = self['DECJ'].val
+            ce = numpy.cos(ECLIPTIC_OBLIQUITY*numpy.pi/(3600.*180))
+            se = numpy.sin(ECLIPTIC_OBLIQUITY*numpy.pi/(3600.*180))
+            b = numpy.arcsin(ce*numpy.sin(d)-se*numpy.cos(d)*numpy.sin(a))
+            l = numpy.arctan2((se*numpy.sin(d)+ce*numpy.cos(d)*numpy.sin(a))/numpy.cos(b),numpy.cos(d)*numpy.cos(a)/numpy.cos(b))
+            l = l%(2*numpy.pi)
+            return numpy.array([b,l])
+	    
+    def listsys(self):
+        sysflags=[]
+        if ('sys' in self.flags.keys()):
+            for newfl in self.flags['sys']:
+                NewFlag = True
+                for kfl in sysflags :
+                    if kfl == newfl :
+                        NewFlag = False
+                if NewFlag :
+                   sysflags.append(newfl)
+        return sysflags
+
+    # <<<<<<<<<<<<<<<<<<<< end of changes by A.Petiteau <<<<<<<<<<<<<<<<<<<<  
+
     # return TOA errors in microseconds (numpy.double array)
     property toaerrs:
         """Returns a (read-only) array of TOA errors in microseconds."""
@@ -912,10 +949,9 @@ cdef class tempopulsar:
         textOutput(&(self.psr[0]),1,0,0,0,1,parFile)
 
         # tempo2/textOutput.C newer than revision 1.60 (2014/06/27 17:14:44) [~1.92 for tempo2.h]
-        # does not honor parFile name, and uses pulsar_name + '-new.par' instead;
-        # this was fixed in 1.61...
-        # if tempo2version() >= StrictVersion("1.92"):
-        #     os.rename(self.psr[0].name + '-new.par',parfile)
+        # does not honor parFile name, and uses pulsar_name + '-new.par' instead
+        if tempo2version() >= StrictVersion("1.92") and os.path.isfile(self.psr[0].name + '-new.par'): # Modified by A.Petiteau
+            os.rename(self.psr[0].name + '-new.par',parfile)
 
     def savetim(self,timfile):
         cdef char timFile[MAX_FILELEN]
