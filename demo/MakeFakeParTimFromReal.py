@@ -256,7 +256,7 @@ for pp in psrs :
     ##### Checking plots
 
     if options.Plots :
-        Npsrfits = 30
+        Npsrfits = 10
 
         ### Loading the original pulsar
         psr_o = T.tempopulsar(parfile=DirInSub+"/"+parfile,timfile=DirInSub+"/"+timfile)

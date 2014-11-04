@@ -257,11 +257,11 @@ def add_dm(psr,A,gamma,components=10,seed=None):
     using `components` Fourier bases.
     Optionally take a pseudorandom-number-generator seed."""
 
-    noise2add = rednoise(psr.toas(),psr.nobs,psr.freqs,A,gamma,components=components,seed=None)
+    noise2add = dm(psr.toas(),psr.nobs,psr.freqs,A,gamma,components=components,seed=None)
     psr.stoas[:] += noise2add
     
 
-def add_dm(t,nobs,freqs,A,gamma,components=10,seed=None):
+def dm(t,nobs,freqs,A,gamma,components=10,seed=None):
     """Add DM variations with P(f) = A^2 / (12 pi^2) (f year)^-gamma,
     using `components` Fourier bases.
     Optionally take a pseudorandom-number-generator seed."""
@@ -620,7 +620,7 @@ class toasim:
                 t.append(np.float128(self.timTOAs[itoa][0]))
                 f.append(np.float64(self.timTOAs[itoa][0]))
         ## Create red noise data
-        DMval = add_dm(np.array(t),len(t),np.array(f),A,gamma,components=components,seed=seed)
+        DMval = dm(np.array(t),len(t),np.array(f),A,gamma,components=components,seed=seed)
         itt=0
         ## Add rednoise data to the TOAs
         for itoa in xrange(len(self.timTOAs)) :
