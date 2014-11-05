@@ -2,6 +2,7 @@ import math, os, sys, re
 import numpy as np
 import mpmath as mp
 import libstempo
+import copy
 
 import pylab as pl
 
@@ -321,7 +322,7 @@ def run(command, disp=False, NoExit=False):
 ################ Class toas toasim
 class toasim:
 
-    def __init__(self,parfile,timfile=None,refpsr=None,dirscratch="",recordIdeal=False):
+    def __init__(self,parfile,timfile=None,refpsr=None,verbose=0):
         """
         used to simulate a pulsar from a reference pulsar defined by its parfile OR by a libstempo.tempopulsar .
         The TOAs are created from existing TOAs (timfile or tempopulsar).
@@ -330,7 +331,7 @@ class toasim:
         self.niter = 5
         self.prec = 25
         mp.mp.dps = self.prec
-
+        self.verbose = verbose
         
         #### Checking parfile
         if not os.path.isfile(parfile):
@@ -350,11 +351,11 @@ class toasim:
         #### Extracting list of backend
         self.syslist = refpsr.listsys()
         self.psrname = refpsr.name
-        print "Pulsar :", self.psrname
-        print "Backend :",self.syslist
+        if verbose!=0 : print "Pulsar :", self.psrname
+        if verbose!=0 : print "Backend :",self.syslist
 
         #### Extracting EFAC, EQUAD, RN and DM from TN parameters in the parfile and remove them from the parfile
-        print "EFAC, EQUAD, RN and DM read in parfile",parfile
+        if verbose!=0 : print "EFAC, EQUAD, RN and DM read in parfile",parfile
         self.EFAC  = np.ones(len(self.syslist))
         self.EQUAD = np.zeros(len(self.syslist)) 
         self.RNAmp = 0.
@@ -399,10 +400,11 @@ class toasim:
             else:
                 self.parlines.append(line)
             
-        for i in xrange(len(self.syslist)):
-            print "\t -",self.syslist[i],": EFAC =",self.EFAC[i]," EQUAD =",self.EQUAD[i]
-        print "\t - Red noise : amplitude =",self.RNAmp," gamma =",self.RNGam
-        print "\t - DM : amplitude =",self.DMAmp," gamma =",self.DMGam
+        if verbose!=0 :
+            for i in xrange(len(self.syslist)):
+                print "\t -",self.syslist[i],": EFAC =",self.EFAC[i]," EQUAD =",self.EQUAD[i]
+            print "\t - Red noise : amplitude =",self.RNAmp," gamma =",self.RNGam
+            print "\t - DM : amplitude =",self.DMAmp," gamma =",self.DMGam
                 
                 
         #### Extracting list of toas and timlines :
@@ -414,11 +416,13 @@ class toasim:
                 
         #### Idealizing each backend
         for xSys in self.syslist :
-            print "Idealizing backend",xSys,"..."
+            if verbose!=0 : print "Idealizing backend",xSys,"..."
+            localverbose = 0
+            if verbose>1 : localverbose = 1
             for ite in xrange(self.niter):
                 ### Using libstempo.tempopulsar to get residuals
-                self.savepar("TmpSys")
-                self.savetim("TmpSys",xSys)
+                self.savepar("TmpSys", verbose=localverbose)
+                self.savetim("TmpSys", xSys, verbose=localverbose)
                 psrS =  libstempo.tempopulsar(parfile="TmpSys.par",timfile="TmpSys.tim",dofit=False)
                 res = psrS.residuals()
                 ### Substract residuals
@@ -428,32 +432,26 @@ class toasim:
                         self.timTOAs[itoa][0] -= mp.mpf(repr(res[k])) / mp.mpf('86400.')
                         k += 1
                 ### Substract residuals to libstempo.tempopulsar just to compute RMS
-                print "\t - iteration %d : before : rms = %e" % ( ite, psrS.rms())
+                if verbose>1 : print "\t - iteration %d : before : rms = %e" % ( ite, psrS.rms())
                 psrS.stoas[:] -= res / 86400.
-                print "\t - iteration %d : after : rms = %e , residuals mean (std) = %e (%e) s" % ( ite, psrS.rms(), np.mean(res), np.std(res) )
+                if verbose>1 : print "\t - iteration %d : after : rms = %e , residuals mean (std) = %e (%e) s" % ( ite, psrS.rms(), np.mean(res), np.std(res) )
                 
-        
-        if recordIdeal :
-            #### Record timfile and parfile for ideal, i.e. with only jump fitting
-            os.system("mkdir -p Ideal")
-            self.savetim("Ideal/"+self.psrname,multifile=True)
-            fOut = open("Ideal/"+self.psrname+".par",'w')
-            for line in self.parlines:
-                w = re.split("\s+",line)
-                #print w
-                if len(w)>3 and w[2]=="1":
-                    w[2]="0"
-                if w[0][:2]=="TN":
-                    w[0] = "#" + w[0]
-                for xw in w:
-                    fOut.write(xw+" ")
-                fOut.write("\n")
-            fOut.close()
+        #### Keep ideal TOAs in memory to be the basis of 
+        self.timTOAsIdeal = copy.deepcopy(self.timTOAs)
 
+    
+        #### TODO 
+        # In the idealized data, there are still jumps thus it seems that the jumps are different from the original one :
+        # - Why ?
+        # - Do we need to fit for the jumps now and update the jumps value ? 
+    
+    
 
-    def loadtim(self, timfile, InT2psr=True):
+    def loadtim(self, timfile, InT2psr=True, verbose=-1):
         """ Load TOAs from timfile in TOAs """
-        print "Load toas from",timfile,"..."
+        if verbose==-1 : verbose = self.verbose
+        if verbose!=0 : print "Load toas from",timfile,"..."
+        
         if not os.path.isfile(timfile):
             print "ERROR : No such file",timfile
             sys.exit(1)
@@ -489,9 +487,11 @@ class toasim:
 
 
 
-    def savetim(self, basename, sysname='all', multifile=False):
+    def savetim(self, basename, sysname='all', multifile=False, IdealTOAs=False, verbose=-1):
         "Save TOA in tim file. It is strictly the original tim, except the column 3 and 4 corresponding to the new toa and error."
-        print "Save TOAs in",basename+".tim ..."
+        if verbose==-1 : verbose = self.verbose
+        if verbose!=0 : print "Save TOAs in",basename+".tim ..."
+        
         fOut = open(basename+".tim",'w')
         for line in self.timHead :
             for iw in xrange(len(line)):
@@ -503,9 +503,12 @@ class toasim:
             os.system("mkdir -p "+basename)
             for xsys in self.syslist :
                 fOut.write("INCLUDE "+os.path.basename(basename)+"/"+xsys+".tim\n")
-                self.savetim(basename+"/"+xsys, sysname=xsys, multifile=False)
+                self.savetim(basename+"/"+xsys, sysname=xsys, multifile=False, IdealTOAs=IdealTOAs)
         else :
-            for tl in self.timTOAs :
+            tTOAs = self.timTOAs
+            if IdealTOAs :
+                tTOAs = self.timTOAsIdeal
+            for tl in tTOAs :
                 if sysname=='all' or sysname==tl[2] :
                     tl[3][2] = "%s" % (mp.nstr(tl[0],n=self.prec)) # update the word corresponding to the TOAs
                     tl[3][3] = "%s" % (mp.nstr(tl[1],n=self.prec)) # update the word corresponding to the errors 
@@ -518,9 +521,12 @@ class toasim:
         fOut.close()
 
 
-    def savepar(self, basename, AddTNEFEQ=False, AddTNRNDM=False):
+    def savepar(self, basename, AddTNEFEQ=False, AddTNRNDM=False, verbose=-1):
         "Save parameters in par file. It's exactly the original par file except that TN parameters can be added or not."
-        print "Save parameters in",basename+".par ..."
+        if verbose==-1 : verbose = self.verbose
+        if verbose==-1 : verbose = self.verbose
+        
+        if verbose!=0 : print "Save parameters in",basename+".par ..."
         fIn = open(basename+".par",'w')
         for line in self.parlines:
             fIn.write(line)
@@ -533,30 +539,34 @@ class toasim:
         fIn.close()
         
 
-    def add_whitenoise(self, efac=1.0, equad=0.0, sysname='all', seed=None):
+    def add_whitenoise(self, efac=1.0, equad=0.0, sysname='all', seed=None, verbose=-1):
         """Add nominal TOA errors, multiplied by `efac` factor and adding an equad.
         Optionally take a pseudorandom-number-generator seed.
         The errorbar in the tim file after this operation will contain the efac and equad """
+        if verbose==-1 : verbose = self.verbose
+        if verbose!=0 : print "Add white noise on sys","with EFAC =",efac," and EQUAD =",equad,"( seed =",seed,") ..."
     
         if seed is not None:
             np.random.seed(seed)
-
+        
         for toa in self.timTOAs :
             if toa[2]==sysname or sysname=='all' :
                 toa[1] = mp.sqrt ( mp.mpf(equad*equad*1e12) + toa[1]*toa[1]*mp.mpf(efac*efac) )
                 toa[0] += toa[1] * mp.mpf((1e-6 / day) * np.random.randn())
 
 
-    def add_whitenoiseTN(self, efacGlobal=1.0, equadGlobal=0.0, seed=None):
+    def add_whitenoiseTN(self, efacGlobal=1.0, equadGlobal=0.0, seed=None, verbose=-1):
         """Add nominal TOA errors, multiplied by efac factor and adding quadratically an equad.
         The used equad and efac are the TNEF and TNEQ parameters in the parfile.
         Optionally take a pseudorandom-number-generator seed.
         The errorbar in the tim file after this operation will NOT contain the `efac` and `equad` 
         but the TN parameter will be added in the parfile"""
-    
+        if verbose==-1 : verbose = self.verbose
+        if verbose!=0 : print "Add white noise from TN parameters and global EFAC =",efacGlobal," and EQUAD =",equadGlobal," ( seed =",seed,") ..."
+        
         if seed is not None:
             np.random.seed(seed)
-    
+        
         if len(self.parlinesTNEFEEQ)==0:
             print "WARNING : there is no TNEF and TNEQ in the original parfile so individual EFAC is 1.0 and individual EQUAD is 0.0 "
         for i in xrange(len(self.syslist)):
@@ -571,72 +581,115 @@ class toasim:
                     toa[0] += err * mp.mpf((1e-6 / day) * np.random.randn())
 
 
-    def add_rednoise(self,A,gamma,components=50,seed=None,sys="all"):
+    def add_rednoise(self,A,gamma,components=50,seed=None,sysname="all", verbose=-1):
         """Add red noise with P(f) = A^2 / (12 pi^2) (f year)^-gamma,
         using `components` Fourier bases.
         Optionally take a pseudorandom-number-generator seed.
         Use directly the simple function.
-        With sys, it is possible to add red noise only on one backend."""
+        With sysname, it is possible to add red noise only on one backend."""
+        if verbose==-1 : verbose = self.verbose
 
         t = []
-        ## Create the TOAs array for the specified sys
-        for itoa in xrange(len(self.timTOAs)):
-            if sys==self.timTOAs[itoa][2] or sys=="all":
-                t.append(np.float128(self.timTOAs[itoa][0]))
-        ## Create red noise data
+        #### Create the TOAs array for the specified sysname using ideal data as reference
+        ## TODO : check that is correct to use ideal data as reference 
+        for itoa in xrange(len(self.timTOAsIdeal)):
+            if sysname==self.timTOAsIdeal[itoa][2] or sysname=="all":
+                t.append(np.float128(self.timTOAsIdeal[itoa][0]))
+        #### Create red noise data
+        if verbose!=0 : print "Add red noise with amplitude =",A,", gamma =", gamma, "and using",components,"components ( seed =",seed,") ..."
         RNval = rednoise(np.array(t),len(t),A,gamma,components=components,seed=seed,debug=False)
         itt=0
-        ## Add rednoise data to the TOAs
+        #### Add rednoise data to the TOAs
         for itoa in xrange(len(self.timTOAs)) :
-            if sys==self.timTOAs[2] or sys=="all":
+            if sysname==self.timTOAs[2] or sysname=="all":
                 self.timTOAs[itoa][0] += mp.mpf(RNval[itt])
                 itt += 1
 
 
-    def add_rednoiseTN(self,components=50,seed=None,sys="all"):
+    def add_rednoiseTN(self,components=50,seed=None,sysname="all", verbose=-1):
         """Add red noise using the TN value read in the original par file."""
+        if verbose==-1 : verbose = self.verbose
+        
         if len(self.parlinesTNRNDM)==0:
             print "WARNING : No addded red noise because there is no TNRed in the original parfile"
             return False
         else :
-            print self.RNAmp, self.RNGam
-            self.add_rednoise(self.RNAmp,self.RNGam,components=components,seed=seed,sys=sys)
+            if verbose!=0 : print "Add red noise from TN parameters (amplitude =",self.RNAmp,"and gamma =", self.RNGam, ") using",components,"components ( seed =",seed,") ..."
+            self.add_rednoise(self.RNAmp,self.RNGam,components=components,seed=seed,sysname=sysname)
             return True
         
                     
-    def add_dm(self,A,gamma,components=50,seed=None,sys="all"):
+    def add_dm(self,A,gamma,components=50,seed=None,sysname="all", verbose=-1):
         """Add DM variations with P(f) = A^2 / (12 pi^2) (f year)^-gamma,
         using `components` Fourier bases.
         Optionally take a pseudorandom-number-generator seed.
         WARNING: the amplitude definition is the same as for red noise, 
         so multiply by np.sqrt(12)*np.pi if temponest definition.
         """
+        if verbose==-1 : verbose = self.verbose
         
         t = []
         f = []
-        ## Create the TOAs array for the specified sys
-        for itoa in xrange(len(self.timTOAs)):
-            if sys==self.timTOAs[itoa][2] or sys=="all":
-                t.append(np.float128(self.timTOAs[itoa][0]))
-                f.append(np.float64(self.timTOAs[itoa][0]))
-        ## Create red noise data
+        #### Create the TOAs array for the specified sysname using ideal data as reference
+        ## TODO : check that is correct to use ideal data as reference 
+        for itoa in xrange(len(self.timTOAsIdeal)):
+            if sysname==self.timTOAsIdeal[itoa][2] or sysname=="all":
+                t.append(np.float128(self.timTOAsIdeal[itoa][0]))
+                f.append(np.float64(self.timTOAsIdeal[itoa][0]))
+        #### Create red noise data
+        if verbose!=0 : print "Add DM with amplitude =",A,", gamma =", gamma, "and using",components,"components ( seed =",seed,") ..."
         DMval = dm(np.array(t),len(t),np.array(f),A,gamma,components=components,seed=seed)
         itt=0
-        ## Add rednoise data to the TOAs
+        #### Add rednoise data to the TOAs
         for itoa in xrange(len(self.timTOAs)) :
-            if sys==self.timTOAs[2] or sys=="all":
+            if sysname==self.timTOAs[2] or sysname=="all":
                 self.timTOAs[itoa][0] += mp.mpf(DMval[itt])
                 itt += 1
             
 
-    def add_dmTN(self,components=50,seed=None,sys="all"):
+    def add_dmTN(self,components=50,seed=None,sysname="all", verbose=-1):
         """Add red noise using the TN value read in the original par file."""
+        if verbose==-1 : verbose = self.verbose
+        
         if len(self.parlinesTNRNDM)==0:
             print "WARNING : No addded DM because there is no TNRed in the original parfile"
             return False
         else :
-            self.add_dm(self.DMAmp*np.sqrt(12)*np.pi,self.DMGam,components=components,seed=seed,sys=sys)
+            if verbose!=0 : print "Add DM from TN parameters (amplitude =",self.DMAmp,"and gamma =", self.DMGam, ") using",components,"components ( seed =",seed,") ..."
+            self.add_dm(self.DMAmp*np.sqrt(12)*np.pi,self.DMGam,components=components,seed=seed,sysname=sysname)
             return True
+
+
+    def add_gwb(self, gwb, dist, InjectionFile="None", verbose=-1):
+        """ Add GW background on simulated TOAs using a GWB object 
+        from libstempo and the pulsar distance in kpc."""
+        if verbose==-1 : verbose = self.verbose
+        
+        if verbose!=0 : print "Add GWB ..."
+        #### Making libstempo.tempopulsar save in parfile and timfile
+        localverbose=0
+        if verbose>1 : localverbose=1
+        self.savepar("TmpIdeal", verbose=localverbose)
+        self.savetim("TmpIdeal",IdealTOAs=True, verbose=localverbose)
+        psr = libstempo.tempopulsar(parfile="TmpIdeal.par",timfile="TmpIdeal.tim",dofit=False)
+        #### Creating GWB data
+        GWBval = gwb.add_gwb(psr,dist)
+        #### Adding data
+        fOut = None
+        if InjectionFile!="None":
+            fOut = open(InjectionFile,'w')
+            fOut.write("#TOAIdeal GWB TOARelBeforeInjection TOARelAfterInjection DiffTOAAft-Bef\n")
+        for itoa in xrange(len(self.timTOAs)) :
+            TOABefInj = self.timTOAs[itoa][0]
+            self.timTOAs[itoa][0] += mp.mpf(np.float64(GWBval[itoa]),n=self.prec)
+            if fOut!=None :
+                fOut.write(mp.nstr(self.timTOAsIdeal[itoa][0],n=self.prec)+" "+repr(GWBval[itoa])+" "\
+                           +mp.nstr(TOABefInj-self.timTOAsIdeal[0][0],n=self.prec)+" "\
+                           +mp.nstr(self.timTOAs[itoa][0]-self.timTOAsIdeal[0][0],n=self.prec)+" "\
+                           +mp.nstr(self.timTOAs[itoa][0]-TOABefInj,n=self.prec)+"\n")
+        if fOut!=None :
+            fOut.close()
+
 
 
 ########### End of class toasim

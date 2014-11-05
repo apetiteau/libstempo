@@ -10,6 +10,7 @@ import pylab as pl
 
 import libstempo as T
 import libstempo.toasim as LT
+from libstempo import GWB
 
 ################################ MAIN PROGRAM ################################
 
@@ -63,9 +64,25 @@ parser.add_option("-P", "--Plots",
                   action="store_true", dest="Plots", default=False,
                   help="Make comparison plots [default: False ]")
 
+parser.add_option("-I", "--SaveIdeal",
+                  action="store_true", dest="SaveIdeal", default=False,
+                  help="Save ideal TOAs in timfile in directory Ideal  [default: False ]")
+
+parser.add_option("-G", "--GWB",
+                  type="string", dest="GWB", default="None",
+                  help="Add a GW background in the form Amp,Gam . Ex: 1.0e-14,4.3  [default: False ]")
+
+parser.add_option("-g", "--SaveInjection",
+                  action="store_true", dest="SaveInjection", default=False,
+                  help="Save injection GWB data [default: False ]")
+
 parser.add_option("-S", "--Seed",
                   type="int", dest="Seed", default=0,
                   help="Seed  [default: 0 --> random ]")
+
+parser.add_option("-v", "--verbose",
+                  type="int", dest="verbose", default=0,
+                  help="Verbose level : 0, 1 or 2 [Default 0]")
 
 
 
@@ -79,24 +96,28 @@ parser.add_option("-S", "--Seed",
 DirIn   = options.InputDir
 DirSimu = options.OutputDir+"/"
 DirPlot = DirSimu+"/PlotCompare/"
+DirIdeal = DirSimu+"/Ideal/"
+
 
 if (not os.path.isdir(DirSimu)) : 
     os.mkdir(DirSimu)
 if (not os.path.isdir(DirPlot)) : 
     os.mkdir(DirPlot)
 
+if options.SaveIdeal and (not os.path.isdir(DirIdeal)) : 
+    os.mkdir(DirIdeal)
 
 
 listDir = os.listdir(DirIn)
 listDir.sort()
 
-psrs = []
+psrs = [] # list of pulsar info : name, subdir, distance in kiloparsec
 for xf in listDir :
     if xf[0]=="J" :
         if xf[-len(options.ParExtention):]==options.ParExtention :
-            psrs.append([xf[0:-len(options.ParExtention)],""])
+            psrs.append([xf[0:-len(options.ParExtention)],"",-1.0])
         if os.path.isdir(DirIn+"/"+xf):
-            psrs.append([xf,xf])
+            psrs.append([xf,xf,1.0])
             listSubDir = os.listdir(DirIn+"/"+xf)
                     
 
@@ -105,10 +126,36 @@ if options.Seed != 0:
     RandSeed = options.Seed
 
 
+gwb = None
+if options.GWB!="None" :
+    ### Create GWB 
+    w = re.split(",",options.GWB)
+    gwb = GWB(ngw=10000,flow=1e-10,fhigh=1e-5,gwAmp=float(w[0]),alpha=(3.-float(w[1]))/2.) 
+
+    ### Load distance
+    distf = DirIn+"/distance.dat"
+    if (not os.path.isfile(distf)):
+        print "ERROR : No such file", distf
+        sys.exit(1)
+    fIn = open(distf,'r')
+    lines = fIn.readlines()
+    fIn.close()
+    for i in xrange(len(psrs)):
+        p = psrs[i][0]
+        for line in lines:
+            w = re.split("\s+",line)
+            if p==w[0]:
+                psrs[i][2] = float(w[1])
+        if psrs[i][2] < 0. :
+            print "ERROR : the distance of",p,"is not found in", distf
+            sys.exit(1)
+
+
 for pp in psrs :
 
     p = pp[0]
     subdir = pp[1]
+    dist = pp[2]
     print "====================",p,"===================="
     
     NoWN = True # False if EFAC and EQUAD have already been added
@@ -133,23 +180,23 @@ for pp in psrs :
 
 
     ##### Making a simulated pulsar object starting with an ideal pulsar 
-    print ">>>>> Making an ideal pulsar ..."
-    spsr = LT.toasim(parfile=DirInSub+"/"+parfile,timfile=DirInSub+"/"+timfile)
+    if options.verbose!=0 : print ">>>>> Making an ideal pulsar ..."
+    spsr = LT.toasim(parfile=DirInSub+"/"+parfile, timfile=DirInSub+"/"+timfile, verbose=options.verbose)
     
     
     ##### Add white noise from noise file
-    RNamp=-15.
-    RNgam=1.1
-    DMamp=-15.
-    DMgam=1.1
-    EQg=-15.
-    EFg=1.0
+    RNamp = 0.0
+    RNgam = 1.1
+    DMamp = 0.0
+    DMgam = 1.1
+    EQg = 0.0
+    EFg = 1.0
     EFEQs=[]
     if options.UseNoiseFile :
         
         noifile=p+"-Noises.txt"
         ##### Extracting noise 
-        print ">>>>> Reading noise file ..."
+        if options.verbose!=0 : print ">>>>> Reading noise file ..."
         
         if (not os.path.isfile(DirInSub+"/"+noifile)):
             print "ERROR : noise-file", DirInSub+"/"+noifile, "is not found"
@@ -173,7 +220,7 @@ for pp in psrs :
                 else:
                     iSys=-1
                     for i in xrange(len(EFEQs)):
-                        if EFEQs[i] == w[2]:
+                        if EFEQs[i][0] == w[2]:
                             iSys = i
                     if iSys!=-1:
                         EFEQs[iSys][1] =  float(w[3])
@@ -185,18 +232,20 @@ for pp in psrs :
                 else:
                     iSys=-1
                     for i in xrange(len(EFEQs)):
-                        if EFEQs[i] == w[2]:
+                        if EFEQs[i][0] == w[2]:
                             iSys = i
                     if iSys!=-1:
                         EFEQs[iSys][2] = 10.**float(w[3])
                     else :
                         EFEQs.append([w[2],1.0,10.**float(w[3])])  
         fIn.close()
-        print "\t - Red :",RNamp,RNgam
-        print "\t - DM  :",DMamp,DMgam
-        print "\t - EQg :",EQg
-        print "\t - EFg :",EFg
-        print "\t - EQEFs :",EFEQs
+    
+        if options.verbose!=0 : 
+            print "\t - Red :",RNamp,RNgam
+            print "\t - DM  :",DMamp,DMgam
+            print "\t - EQg :",EQg
+            print "\t - EFg :",EFg
+            print "\t - EQEFs :",EFEQs
 
         #### Adding noises
         if RNamp!=-15. :
@@ -213,7 +262,7 @@ for pp in psrs :
             spsr.add_whitenoiseTN(efacGlobal=EFg, equadGlobal=EQg, seed=RandSeed+3)
         else:
             for x in EFEQs :
-                spsr.add_whitenoise(efac=EFg*x[1], equad=np.sqrt(EQg**2+x[2]**2), sys=x[0])
+                spsr.add_whitenoise(efac=EFg*x[1], equad=np.sqrt(EQg**2+x[2]**2), sysname=x[0])
   
 
     ##### Add noises from TN parameters if not already done 
@@ -230,9 +279,16 @@ for pp in psrs :
         spsr.add_dmTN(components=options.Components, seed=RandSeed+6)
         NoDM = False
 
+    if gwb!=None :
+        if options.SaveInjection :
+            spsr.add_gwb(gwb,dist,InjectionFile=DirSimu+"/"+p+"_Inj.txt")
+        else:
+            spsr.add_gwb(gwb,dist)
     
     spsr.savepar(DirSimu+"/"+p, AddTNEFEQ=options.UseTNRNDM, AddTNRNDM=options.UseTNRNDM)
     spsr.savetim(DirSimu+"/"+p)
+    if options.SaveIdeal :
+        spsr.savetim(DirIdeal+"/"+p,IdealTOAs=True)
     
 
     ##### Recording new noise file
@@ -270,14 +326,14 @@ for pp in psrs :
 
         """
         ### Loading the simulated pulsar
-        psr_n = T.tempopulsar(parfile=DirSimu+"/"+parfile,timfile=DirSimu+"/"+timfile,dofit=False)
+        psr_n = T.tempopulsar(parfile=DirSimu+"/"+p+".par",timfile=DirSimu+"/"+p+".tim",dofit=False)
         toas_d_n = psr_n.toas() # days
         res_n  = 1.0e6*psr_n.residuals() # microseconds
         errs_n = psr_n.toaerrs # microseconds
         toas_yr_n = 2014+(toas_d_n-RefMJD_d)/365.25
         rms_n = psr_n.rms()*1e6 
         """
-
+        
         ### Loading the simulated pulsar
         psr_nf = T.tempopulsar(parfile=DirSimu+"/"+p+".par",timfile=DirSimu+"/"+p+".tim",dofit=True)
         for i in xrange(Npsrfits):

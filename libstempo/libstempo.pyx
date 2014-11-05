@@ -320,6 +320,8 @@ cdef class GWB:
         
         pulsar.stoas[:] += res[:] / 86400.0
 
+        return res[:] / 86400.0
+    
     def gw_dist(self):
         theta = numpy.zeros(self.ngw)
         phi = numpy.zeros(self.ngw)
