@@ -306,19 +306,6 @@ def add_line(psr,f,A,offset=0.5):
     psr.stoas[:] += sine / day
 
 
-def run(command, disp=False, NoExit=False):
-    commandline = command % globals()
-    if disp : 
-        print "----> %s" % commandline
-    
-    try:
-        assert(os.system(commandline) == 0)
-    except:
-        print 'Script %s failed at command "%s".' % (sys.argv[0],commandline)
-        if not NoExit :
-            sys.exit(1)
-
-
 ################ Class toas toasim
 class toasim:
 

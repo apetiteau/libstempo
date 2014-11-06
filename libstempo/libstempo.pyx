@@ -1,3 +1,16 @@
+# strategy for python 3
+# for returns, converting char to str (which is a different thing in py2 and py3) should be OK
+#              not sure about the numpy arrays though
+# for input:
+# define a global name for whatever char type is used in the module
+# ctypedef unsigned char char_type
+#
+# cdef char_type[:] _chars(s):
+#     if isinstance(s, unicode):
+#         # encode to the specific encoding used inside of the module
+#         s = (<unicode>s).encode('utf8')
+#     return s
+
 import os, math, re, time
 from distutils.version import StrictVersion
 
@@ -117,6 +130,23 @@ cdef extern from "tempo2.h":
 
     observatory *getObservatory(char *code)
 
+
+cdef void set_longdouble_from_array(long double *p,numpy.ndarray[numpy.npy_longdouble,ndim=0] a):
+    p[0] = (<long double*>(a.data))[0]
+
+cdef void set_longdouble(long double *p,object o):
+    if isinstance(o,numpy.longdouble):
+        set_longdouble_from_array(p,o[...])
+    elif isinstance(o,numpy.ndarray) and o.dtype == numpy.longdouble and o.ndim == 0:
+        set_longdouble_from_array(p,o)
+    else:
+        p[0] = o
+
+cdef object get_longdouble_as_scalar(long double v):
+    cdef numpy.ndarray ret = numpy.array(0,dtype=numpy.longdouble)
+    (<long double*>ret.data)[0] = v
+    return ret.item()
+
 cdef class tempopar:
     cdef public object name
 
@@ -132,29 +162,30 @@ cdef class tempopar:
     property val:
         def __get__(self):
             if not self._isjump:
-                return numpy.longdouble((<long double*>self._val)[0])
+                return get_longdouble_as_scalar((<long double*>self._val)[0])
             else:
                 return float((<double*>self._val)[0])
+
         def __set__(self,value):
             if not self._isjump:
                 if not self._paramSet[0]:
                     self._paramSet[0] = 1
 
-                (<long double*>self._val)[0] = value    # can we set it to numpy.longdouble?
-                (<long double*>self._err)[0] = 0
+                set_longdouble(<long double*>self._val,value)
             else:
                 (<double*>self._val)[0] = value
-                (<double*>self._err)[0] = 0
+                # (<double*>self._err)[0] = 0
 
     property err:
         def __get__(self):
             if not self._isjump:
-                return numpy.longdouble((<long double*>self._err)[0])
+                return get_longdouble_as_scalar((<long double*>self._err)[0])
             else:
                 return float((<double*>self._err)[0])
+
         def __set__(self,value):
             if not self._isjump:
-                (<long double*>self._err)[0] = value
+                set_longdouble(<long double*>self._err,value)
             else:
                 (<double*>self._err)[0] = value
 
@@ -189,9 +220,8 @@ cdef class tempopar:
                 raise ValueError("JUMP parameters declared in the par file cannot be unset in tempo2.")
 
     def __str__(self):
-        # TO DO: proper precision handling
         if self.set:
-            return '%s (%s): %g +/- %g' % (self.name,'fitted' if self.fit else 'not fitted',self.val,self.err)
+            return '%s (%s): %s +/- %s' % (self.name,'fitted' if self.fit else 'not fitted',repr(self.val),repr(self.err))
         else:
             return '%s (unset)'
 
@@ -241,8 +271,7 @@ class prefitpar(object):
         raise TypeError, "Cannot write to prefit parameters."
 
     def __str__(self):
-        # TO DO: proper precision handling
-        return '%s: %g +/- %g' % (self.name,self.val,self.err)
+        return '%s: %s +/- %s' % (self.name,repr(self.val),repr(self.err))
 
 cdef class GWB:
     cdef gwSrc *gw
@@ -453,23 +482,25 @@ cdef class tempopulsar:
                 newpar = create_tempopar(params[ct],subct,self.psr[0].eclCoord)
                 self.pardict[newpar.name] = newpar
                 self.prefit[newpar.name] = prefitpar(newpar.name,
-                                                     numpy.longdouble(params[ct].prefit[subct]),
-                                                     numpy.longdouble(params[ct].prefitErr[subct]))
+                                                     get_longdouble_as_scalar(params[ct].prefit[subct]),
+                                                     get_longdouble_as_scalar(params[ct].prefitErr[subct]))
 
         for ct in range(1,self.psr[0].nJumps+1):  # jump 1 in the array not used...
             newpar = create_tempojump(&self.psr[0],ct)
             self.pardict[newpar.name] = newpar
             self.prefit[newpar.name] = prefitpar(newpar.name,
-                                                 numpy.longdouble(self.psr[0].jumpVal[ct]),
-                                                 numpy.longdouble(self.psr[0].jumpValErr[ct]))
+                                                 self.psr[0].jumpVal[ct],
+                                                 self.psr[0].jumpValErr[ct])
 
         # TODO: it should also not be possible to replace or alter prefit,
         #       or to replace prefit.vals and prefit.errs
 
-        self.prefit.vals = numpy.fromiter((self.prefit[par].val for par in self.pars),numpy.longdouble)
+        self.prefit.vals = numpy.fromiter((get_longdouble_as_scalar(self.prefit[par].val)
+                                           for par in self.pars),numpy.longdouble)
         self.prefit.vals.flags.writeable = False
 
-        self.prefit.errs = numpy.fromiter((self.prefit[par].err for par in self.pars),numpy.longdouble)
+        self.prefit.errs = numpy.fromiter((get_longdouble_as_scalar(self.prefit[par].err)
+                                           for par in self.pars),numpy.longdouble)
         self.prefit.errs.flags.writeable = False
 
         # the designmatrix plugin also adds extra parameters for sinusoidal whitening
@@ -549,7 +580,7 @@ cdef class tempopulsar:
         def __set__(self,values):
             for par,value in zip(self.fitpars,values):
                 self.pardict[par].val = value
-                self.pardict[par].err = 0
+                # self.pardict[par].err = 0
 
     property fiterrs:
         """Returns a numpy longdouble vector of errors of all parameters that are fitted."""
@@ -572,7 +603,7 @@ cdef class tempopulsar:
         def __set__(self,values):
             for par,value in zip(self.setpars,values):
                 self.pardict[par].val = value
-                self.pardict[par].err = 0
+                # self.pardict[par].err = 0
 
     property seterrs:
         """Returns a numpy longdouble vector of errors of all parameters that have been set."""
@@ -728,8 +759,7 @@ cdef class tempopulsar:
 
     def binarydelay(self):
         """Return a long-double numpy array of the delay (a private copy)
-        introduced by the binary model. Does not re-form the residuals
-        """
+        introduced by the binary model. Does not re-form the residuals."""
         # TODO: Is it not much faster to call DDmodel/XXmodel directly?
         cdef long double [:] _torb = <long double [:self.nobs]>&(self.psr[0].obsn[0].torb)
         _torb.strides[0] = sizeof(observation)
@@ -951,9 +981,10 @@ cdef class tempopulsar:
         textOutput(&(self.psr[0]),1,0,0,0,1,parFile)
 
         # tempo2/textOutput.C newer than revision 1.60 (2014/06/27 17:14:44) [~1.92 for tempo2.h]
-        # does not honor parFile name, and uses pulsar_name + '-new.par' instead
-        if tempo2version() >= StrictVersion("1.92") and os.path.isfile(self.psr[0].name + '-new.par'): # Modified by A.Petiteau
-            os.rename(self.psr[0].name + '-new.par',parfile)
+        # does not honor parFile name, and uses pulsar_name + '-new.par' instead;
+        # this was fixed in 1.61...
+        # if tempo2version() >= StrictVersion("1.92"):
+        #     os.rename(self.psr[0].name + '-new.par',parfile)
 
     def savetim(self,timfile):
         cdef char timFile[MAX_FILELEN]

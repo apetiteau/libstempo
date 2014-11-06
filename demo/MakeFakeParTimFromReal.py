@@ -117,7 +117,7 @@ for xf in listDir :
         if xf[-len(options.ParExtention):]==options.ParExtention :
             psrs.append([xf[0:-len(options.ParExtention)],"",-1.0])
         if os.path.isdir(DirIn+"/"+xf):
-            psrs.append([xf,xf,1.0])
+            psrs.append([xf,xf,-1.0])
             listSubDir = os.listdir(DirIn+"/"+xf)
                     
 
@@ -150,6 +150,7 @@ if options.GWB!="None" :
             print "ERROR : the distance of",p,"is not found in", distf
             sys.exit(1)
 
+print psrs
 
 for pp in psrs :
 
@@ -248,12 +249,12 @@ for pp in psrs :
             print "\t - EQEFs :",EFEQs
 
         #### Adding noises
-        if RNamp!=-15. :
+        if RNamp!=0.0 :
             spsr.add_rednoise(RNamp, RNgam, components=options.Components, seed=RandSeed+1)
             NoRN = False
 
         
-        if DMamp!=-15. :
+        if DMamp!=0.0 :
             spsr.add_dm(DMamp*np.sqrt(12)*np.pi, DMgam, components=options.Components, seed=RandSeed+2)
             NoDM = False
 
@@ -301,7 +302,10 @@ for pp in psrs :
         fnoi.write(p+" DM Index "+str(DMgam)+" -1\n")
     if NoWN==False :
         fnoi.write(p+" EFAC global "+str(EFg)+" -1\n")
-        fnoi.write(p+" EQUAD global "+str(EQg)+" -1\n")
+        if EQg==0.0 :
+            fnoi.write(p+" EQUAD global -15 -1\n")
+        else:
+            fnoi.write(p+" EQUAD global "+str(EQg)+" -1\n")
         if not options.UseTNEFEQ :
             for x in EFEQs :
                 fnoi.write(p+" EFAC "+x[0]+" "+str(x[1])+" -1\n")
